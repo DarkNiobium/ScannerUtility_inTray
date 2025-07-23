@@ -2,12 +2,11 @@ from pynput import keyboard
 import time
 import threading
 
-# Параметры
+# Настройки
 MAX_INVALID = 6
-VALID_LENGTHS = {18, 4}
-BUFFER_TIMEOUT = 0.05
+BUFFER_TIMEOUT = 0.05  # если слишком медленно — это ввод руками
 
-# Состояние
+# Состояния
 buffer = ''
 last_key_time = 0
 invalid_streak = 0
@@ -35,6 +34,9 @@ def fake_scan():
     controller.press(keyboard.Key.enter)
     controller.release(keyboard.Key.enter)
 
+def is_russian(text):
+    return any('а' <= c.lower() <= 'я' or 'А' <= c <= 'Я' for c in text)
+
 def on_press(key):
     global buffer, last_key_time, invalid_streak
 
@@ -44,24 +46,30 @@ def on_press(key):
     last_key_time = now
 
     try:
-        if hasattr(key, 'char') and key.char and key.char.isdigit():
+        if hasattr(key, 'char') and key.char:
             buffer += key.char
         elif key == keyboard.Key.enter:
-            debug(f"ENTER pressed. Buffer: {buffer}")
+            code = buffer.strip()
+            debug(f"ENTER pressed. Buffer: {code!r}")
 
-            if len(buffer) in VALID_LENGTHS and buffer.isdigit():
-                invalid_streak = 0
-                debug("Valid scan.")
-            else:
+            if not code or len(code) <= 4:
+                debug("⛔ Игнор: пусто или слишком коротко")
+            elif is_russian(code):
+                debug("⛔ Игнор: есть русские буквы")
+            elif now - last_key_time <= BUFFER_TIMEOUT:
+                # Быстрый ввод, не SSCC и не мусор → strike
                 invalid_streak += 1
-                debug(f"Invalid scan #{invalid_streak}")
+                debug(f"❌ Невалидный штрихкод #{invalid_streak}: {code}")
                 if invalid_streak >= MAX_INVALID:
                     invalid_streak = 0
                     threading.Thread(target=fake_scan, daemon=True).start()
+            else:
+                debug("⛔ Ввод медленный — не считаем")
+                invalid_streak = 0
 
             buffer = ''
     except Exception as e:
-        debug(f"Error: {e}")
+        debug(f"⚠️ Error: {e}")
 
 def main():
     debug("Listening for keyboard input...")
