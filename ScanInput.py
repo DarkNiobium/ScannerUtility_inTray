@@ -52,10 +52,12 @@ def on_press(key):
             code = buffer.strip()
             debug(f"ENTER pressed. Buffer: {code!r}")
 
-            if not code or len(code) <= 4:
+            if not code or len(code) <= 4 or len(code) == 18:
                 debug("⛔ Игнор: пусто или слишком коротко")
+                invalid_streak = 0
             elif is_russian(code):
                 debug("⛔ Игнор: есть русские буквы")
+                invalid_streak = 0
             elif now - last_key_time <= BUFFER_TIMEOUT:
                 # Быстрый ввод, не SSCC и не мусор → strike
                 invalid_streak += 1
