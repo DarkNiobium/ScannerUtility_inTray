@@ -8,6 +8,12 @@ from functools import partial
 from pynput import keyboard
 from PIL import Image, ImageDraw
 import pystray
+import ctypes
+import pyautogui
+import numpy as np
+import cv2
+from tkinter import ttk
+from ttkthemes import ThemedTk
 
 # Настройки
 MAX_INVALID = 6
@@ -15,6 +21,7 @@ BUFFER_TIMEOUT = 0.05
 SAVE_FILE_TEMPLATE = "scanner_data_{}.csv"
 CONFIG_FILE = "config.txt"
 ACCOUNTS = ["Akbarjon", "Abubakr", "Abdulloh", "Guest"]
+TEMPLATE_PATHS = ["template1.png", "template2.png"]
 
 def debug_print(message):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -33,6 +40,37 @@ def create_image(paused):
 
 def is_russian(text):
     return any('а' <= c.lower() <= 'я' or 'А' <= c <= 'Я' for c in text)
+
+def set_english_layout():
+    try:
+        layout = 0x04090409  # en-US
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        hkl = user32.LoadKeyboardLayoutW(hex(layout), 1)
+        user32.ActivateKeyboardLayout(hkl, 0)
+        debug_print("🌐 Раскладка переключена на EN")
+    except Exception as e:
+        error_print(f"Не удалось переключить раскладку: {e}")
+
+def template_found(template_paths, threshold=0.85):
+    try:
+        screenshot = pyautogui.screenshot()
+        screen = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        for path in template_paths:
+            template = cv2.imread(path)
+            if template is None:
+                continue
+            if screen.shape[0] < template.shape[0] or screen.shape[1] < template.shape[1]:
+                continue
+            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+            debug_print(f"Шаблон {path}: {max_val:.3f}")
+            if max_val >= threshold:
+                return True
+        return False
+    except Exception as e:
+        error_print(f"Шаблон-сравнение: {e}")
+        return False
 
 class ScannerApp:
     def __init__(self):
@@ -56,7 +94,6 @@ class ScannerApp:
         self.scanned_codes = set()
         self.load_data()
         self.fake_scanning = False
-
 
     def load_last_account(self):
         if os.path.exists(CONFIG_FILE):
@@ -106,16 +143,24 @@ class ScannerApp:
         except Exception as e:
             error_print(f"CSV saqlashda xatolik: {e}")
 
+
     def fake_scan(self):
+        self.fake_scanning = True
+        set_english_layout()
         self.controller.type("0001")
         self.controller.press(keyboard.Key.enter)
         self.controller.release(keyboard.Key.enter)
         time.sleep(3)
-        self.controller.type("0003")
-        self.controller.press(keyboard.Key.enter)
-        self.controller.release(keyboard.Key.enter)
 
-    
+        if template_found(TEMPLATE_PATHS):
+            debug_print("⛔ Обнаружен шаблон — '0003' отменён")
+        else:
+            self.controller.type("0003")
+            self.controller.press(keyboard.Key.enter)
+            self.controller.release(keyboard.Key.enter)
+            debug_print("✅ Отправлен '0003'")
+
+        self.fake_scanning = False
 
     def on_key(self, key):
         try:
@@ -140,6 +185,7 @@ class ScannerApp:
                 elif is_russian(code):
                     self.invalid_streak = 0
                 elif len(code) == 18 and code.isdigit():
+                    set_english_layout()
                     if code not in self.scanned_codes:
                         self.scanned_codes.add(code)
                         self.count += 1
@@ -167,8 +213,15 @@ class ScannerApp:
         listener = keyboard.Listener(on_press=self.on_key)
         listener.start()
 
+    def start_hotkeys(self):
+        def on_activate():
+            self.toggle_fake_scan(None, None)
+            debug_print("🎯 Ctrl+Space → FakeScan ON/OFF")
+        hotkeys = keyboard.GlobalHotKeys({'<ctrl>+<space>': on_activate})
+        hotkeys.start()
+
     def create_window(self):
-        self.tk_window = tk.Tk()
+        self.tk_window = ThemedTk(theme="plastic")
         self.tk_window.title("📋 Skanner Ma'lumotlari")
         self.tk_window.geometry("400x260")
         self.tk_window.protocol("WM_DELETE_WINDOW", self.tk_window.withdraw)
@@ -279,5 +332,6 @@ if __name__ == "__main__":
     debug_print("📦 ScannerApp ishga tushdi...")
     app = ScannerApp()
     app.start_listening()
+    app.start_hotkeys()
     threading.Thread(target=create_icon, args=(app,), daemon=True).start()
     app.create_window()

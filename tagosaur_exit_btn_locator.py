@@ -24,10 +24,8 @@ def locate_and_click_button(template_path, threshold=0.7):
         center_x, center_y = x + w // 2, y + h // 2
         pyautogui.moveTo(center_x, center_y)
         pyautogui.click()
-        print(f"✅ Кнопка найдена и нажата: ({center_x}, {center_y})")
         return True
     else:
-        print("❌ Кнопка не найдена.")
         return False
 
 while True:
