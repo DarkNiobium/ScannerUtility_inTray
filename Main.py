@@ -8,12 +8,11 @@ from functools import partial
 from pynput import keyboard
 from PIL import Image, ImageDraw
 import pystray
-import ctypes
-import pyautogui
-import numpy as np
 import cv2
-from tkinter import ttk
-from ttkthemes import ThemedTk
+import numpy as np
+import pyautogui
+import keyboard as kb
+import win32gui
 
 # Настройки
 MAX_INVALID = 6
@@ -21,7 +20,15 @@ BUFFER_TIMEOUT = 0.05
 SAVE_FILE_TEMPLATE = "scanner_data_{}.csv"
 CONFIG_FILE = "config.txt"
 ACCOUNTS = ["Akbarjon", "Abubakr", "Abdulloh", "Guest"]
-TEMPLATE_PATHS = ["template1.png", "template2.png"]
+TEMPLATE_PATH = "valid6.png"
+
+ENGLISH_LAYOUT = 0x04090409
+
+try:
+    import win32api
+    import win32con
+except ImportError:
+    win32api = None
 
 def debug_print(message):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -41,35 +48,24 @@ def create_image(paused):
 def is_russian(text):
     return any('а' <= c.lower() <= 'я' or 'А' <= c <= 'Я' for c in text)
 
-def set_english_layout():
-    try:
-        layout = 0x04090409  # en-US
-        user32 = ctypes.WinDLL('user32', use_last_error=True)
-        hkl = user32.LoadKeyboardLayoutW(hex(layout), 1)
-        user32.ActivateKeyboardLayout(hkl, 0)
-        debug_print("🌐 Раскладка переключена на EN")
-    except Exception as e:
-        error_print(f"Не удалось переключить раскладку: {e}")
-
-def template_found(template_paths, threshold=0.85):
+def switch_to_english():
+    if win32api:
+        hwnd = win32gui.GetForegroundWindow()
+        win32api.SendMessage(hwnd, win32con.WM_INPUTLANGCHANGEREQUEST, 0, ENGLISH_LAYOUT)
+def template_found(path=TEMPLATE_PATH, threshold=0.85):
     try:
         screenshot = pyautogui.screenshot()
-        screen = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-
-        for path in template_paths:
-            template = cv2.imread(path)
-            if template is None:
-                continue
-            if screen.shape[0] < template.shape[0] or screen.shape[1] < template.shape[1]:
-                continue
-            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-            debug_print(f"Шаблон {path}: {max_val:.3f}")
-            if max_val >= threshold:
-                return True
-        return False
+        screenshot = np.array(screenshot)
+        screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_RGB2GRAY)
+        template = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if template is None:
+            error_print(f"Shablon topilmadi: {path}")
+            return False
+        res = cv2.matchTemplate(screenshot_gray, template, cv2.TM_CCOEFF_NORMED)
+        loc = np.where(res >= threshold)
+        return len(loc[0]) > 0
     except Exception as e:
-        error_print(f"Шаблон-сравнение: {e}")
+        error_print(f"OpenCV xatolik: {e}")
         return False
 
 class ScannerApp:
@@ -94,7 +90,8 @@ class ScannerApp:
         self.scanned_codes = set()
         self.load_data()
         self.fake_scanning = False
-
+        kb.add_hotkey('ctrl+space', self.toggle_fake_scan_hotkey)
+        self.scan_0003()
     def load_last_account(self):
         if os.path.exists(CONFIG_FILE):
             try:
@@ -136,31 +133,42 @@ class ScannerApp:
     def save_data(self):
         save_file = self.get_save_file()
         try:
-            with open(save_file, 'w', newline='', encoding='utf-8') as f:
+            with open(save_file,  'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 for code in self.scanned_codes:
                     writer.writerow([code])
         except Exception as e:
             error_print(f"CSV saqlashda xatolik: {e}")
 
+    def scan_0003(self):
+        if template_found():
+            debug_print("🖼️ Shablon topildi — yuborilmoqda 0003")
+            self.controller.type("0003")
+            self.controller.press(keyboard.Key.enter)
+            self.controller.release(keyboard.Key.enter)
+            return
+        else:return
 
     def fake_scan(self):
         self.fake_scanning = True
-        set_english_layout()
         self.controller.type("0001")
         self.controller.press(keyboard.Key.enter)
         self.controller.release(keyboard.Key.enter)
         time.sleep(3)
-
-        if template_found(TEMPLATE_PATHS):
-            debug_print("⛔ Обнаружен шаблон — '0003' отменён")
-        else:
+        if template_found():
+            debug_print("🖼️ Shablon topildi — yuborilmoqda 0003")
             self.controller.type("0003")
             self.controller.press(keyboard.Key.enter)
             self.controller.release(keyboard.Key.enter)
-            debug_print("✅ Отправлен '0003'")
-
+        else:
+            debug_print("🚫 Shablon topilmadi — 0003 yuborilmadi")
         self.fake_scanning = False
+
+    def toggle_fake_scan_hotkey(self):
+        self.enable_fake_scan = not self.enable_fake_scan
+        debug_print(f"FakeScan {'yoqildi' if self.enable_fake_scan else 'o\'chirildi'}")
+        self.update_tooltip()
+        self.update_window()
 
     def on_key(self, key):
         try:
@@ -169,7 +177,6 @@ class ScannerApp:
             now = time.time()
             delay = now - self.last_key_time
             self.last_key_time = now
-
             if delay > self.max_delay:
                 self.buffer = ''
 
@@ -185,7 +192,12 @@ class ScannerApp:
                 elif is_russian(code):
                     self.invalid_streak = 0
                 elif len(code) == 18 and code.isdigit():
-                    set_english_layout()
+                    if template_found():
+                        debug_print("🖼️ Shablon topildi — yuborilmoqda 0003")
+                        self.controller.type("0003")
+                        self.controller.press(keyboard.Key.enter)
+                        self.controller.release(keyboard.Key.enter)
+                    switch_to_english()
                     if code not in self.scanned_codes:
                         self.scanned_codes.add(code)
                         self.count += 1
@@ -195,6 +207,11 @@ class ScannerApp:
                         self.update_window()
                     else:
                         debug_print(f"🔁 Takroriy kod: {code}")
+                        if template_found():
+                            debug_print("🖼️ Shablon topildi — yuborilmoqda 0003")
+                            self.controller.type("0003")
+                            self.controller.press(keyboard.Key.enter)
+                            self.controller.release(keyboard.Key.enter)
                     self.invalid_streak = 0
                 elif is_fast:
                     self.invalid_streak += 1
@@ -213,15 +230,8 @@ class ScannerApp:
         listener = keyboard.Listener(on_press=self.on_key)
         listener.start()
 
-    def start_hotkeys(self):
-        def on_activate():
-            self.toggle_fake_scan(None, None)
-            debug_print("🎯 Ctrl+Space → FakeScan ON/OFF")
-        hotkeys = keyboard.GlobalHotKeys({'<ctrl>+<space>': on_activate})
-        hotkeys.start()
-
     def create_window(self):
-        self.tk_window = ThemedTk(theme="plastic")
+        self.tk_window = tk.Tk()
         self.tk_window.title("📋 Skanner Ma'lumotlari")
         self.tk_window.geometry("400x260")
         self.tk_window.protocol("WM_DELETE_WINDOW", self.tk_window.withdraw)
@@ -257,9 +267,7 @@ class ScannerApp:
             self.icon.icon = create_image(self.paused)
 
     def toggle_fake_scan(self, icon, item):
-        self.enable_fake_scan = not self.enable_fake_scan
-        self.update_window()
-        self.update_tooltip()
+        self.toggle_fake_scan_hotkey()
 
     def toggle_window(self, *args):
         if self.tk_window:
@@ -329,9 +337,8 @@ def create_icon(scanner: ScannerApp):
     icon.run()
 
 if __name__ == "__main__":
-    debug_print("📦 ScannerApp ishga tushdi...")
+    debug_print("\U0001F4E6 ScannerApp ishga tushdi...")
     app = ScannerApp()
     app.start_listening()
-    app.start_hotkeys()
     threading.Thread(target=create_icon, args=(app,), daemon=True).start()
     app.create_window()

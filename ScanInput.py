@@ -25,7 +25,7 @@ def fake_scan():
     controller.press(keyboard.Key.enter)
     controller.release(keyboard.Key.enter)
 
-    time.sleep(3)
+    time.sleep(1)
 
     for char in "0003":
         controller.press(char)
