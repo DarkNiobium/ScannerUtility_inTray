@@ -198,7 +198,7 @@ class ScannerApp:
             elif is_russian(code):
                 self.invalid_streak = 0
             elif len(code) == 18 and code.isdigit():
-                if template_found(TEMPLATE_PRE0001):
+                if template_found(TEMPLATE_PRE0001,threshold = 0.9):
                     self.controller.type("0001")
                     self.controller.press(keyboard.Key.enter)
                     self.controller.release(keyboard.Key.enter)
@@ -343,4 +343,4 @@ if __name__ == "__main__":
     app = ScannerApp()
     app.start_listening()
     threading.Thread(target=create_icon, args=(app,), daemon=True).start()
-    app.create_window()
+    app.create_window()
